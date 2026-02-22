@@ -1,0 +1,17 @@
+[package]
+name = "packet-watcher-rs-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+packet-watcher-rs-common = { path = "../packet-watcher-rs-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "packet-watcher-rs"
+path = "src/main.rs"
