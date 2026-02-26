@@ -13,7 +13,12 @@ pub fn packet_watcher_rs(ctx: RetProbeContext) -> u32 {
 }
 
 fn try_packet_watcher_rs(ctx: RetProbeContext) -> Result<u32, u32> {
-    info!(&ctx, "kretprobe called");
+    let bytes = ctx.ret::<i32>();
+    if bytes == -11 {
+        // -11 means no data for non-blocking socket
+        return Ok(0);
+    }
+    info!(&ctx, "Read {} bytes from socket", ctx.ret::<i32>());
     Ok(0)
 }
 
