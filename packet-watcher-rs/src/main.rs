@@ -2,20 +2,12 @@ mod reporter;
 
 use anyhow::Context;
 use aya::programs::KProbe;
-use clap::Parser;
 use log::{debug, error, info, warn};
-use packet_watcher_rs_common::{DEFAULT_FUNCTION, DEFAULT_MAP_NAME, PROBE_NAME};
+use packet_watcher_rs_common::{STATS_MAP_NAME, WatchedFunction};
 use tokio::signal;
-
-#[derive(Parser)]
-struct Opts {
-    #[clap(short, long, default_value = DEFAULT_FUNCTION)]
-    function: String,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let opts = Opts::parse();
     env_logger::init();
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
@@ -39,27 +31,32 @@ async fn main() -> anyhow::Result<()> {
         warn!("failed to initialize eBPF logger: {e}");
     }
 
-    let program: &mut KProbe = ebpf
-        .program_mut(PROBE_NAME)
-        .with_context(|| format!("failed to find program '{}'", PROBE_NAME))?
-        .try_into()
-        .context("failed to cast program to KProbe")?;
+    for func in WatchedFunction::all() {
+        let program: &mut KProbe = ebpf
+            .program_mut(func.probe_name())
+            .with_context(|| format!("failed to find program '{}'", func.probe_name()))?
+            .try_into()
+            .context("failed to cast program to KProbe")?;
 
-    program.load().context("failed to load kprobe")?;
-    program
-        .attach(&opts.function, 0)
-        .with_context(|| format!("failed to attach to '{}'", opts.function))?;
+        program.load().context("failed to load kprobe")?;
+        program
+            .attach(func.function_name(), 0)
+            .with_context(|| format!("failed to attach to '{}'", func.function_name()))?;
+
+        info!("Attached probe for {}", func.function_name());
+    }
 
     let map = ebpf
-        .take_map(DEFAULT_MAP_NAME)
-        .context("failed to find BYTES_PER_CPU map")?;
+        .take_map(STATS_MAP_NAME)
+        .context(format!("failed to find {} map", STATS_MAP_NAME))?;
+
     tokio::spawn(async move {
         if let Err(e) = reporter::run(&map).await {
             error!("Reporter task error: {e}");
         }
     });
 
-    info!("Waiting for Ctrl-C... Probing {}", opts.function);
+    info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
     info!("Exiting...");
 

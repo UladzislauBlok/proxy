@@ -1,7 +1,7 @@
 use aya::maps::Map;
 use aya::maps::PerCpuArray;
 use log::{debug, error};
-use packet_watcher_rs_common::PacketStats;
+use packet_watcher_rs_common::{PacketStats, WatchedFunction};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
@@ -11,28 +11,42 @@ pub async fn run(map: &Map) -> anyhow::Result<()> {
     let listener = TcpListener::bind("0.0.0.0:9091").await?;
     loop {
         match listener.accept().await {
-            Ok((mut socket, addr)) => match stats_map.get(&0, 0) {
-                Ok(cpu_stats) => {
-                    debug!("Open connection from {}", addr);
-                    let total_bytes: u64 = cpu_stats.iter().map(|s| s.bytes).sum();
-                    send_response(total_bytes, &mut socket).await?;
+            Ok((mut socket, addr)) => {
+                debug!("Open connection from {}", addr);
+                let mut body = String::new();
+                
+                for func in WatchedFunction::all() {
+                    let index = *func as u32;
+                    match stats_map.get(&index, 0) {
+                        Ok(cpu_stats) => {
+                            let total_bytes: u64 = cpu_stats.iter().map(|s| s.bytes).sum();
+                            body.push_str(&format!(
+                                "packet_watcher_bytes_total{{function=\"{}\"}} {}\n",
+                                func.function_name(),
+                                total_bytes
+                            ));
+                        }
+                        Err(e) => {
+                            error!("Failed to read stats for {}: {}", func.function_name(), e);
+                        }
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to read stats: {}", e);
+                
+                if let Err(e) = send_response(&body, &mut socket).await {
+                    error!("Failed to send response: {}", e);
                 }
-            },
+            }
             Err(e) => error!("couldn't get client: {}", e),
         }
     }
 }
 
-async fn send_response(bytes: u64, socket: &mut TcpStream) -> anyhow::Result<()> {
-    let body = format!("packet_watcher_bytes_total {}\n", bytes);
+async fn send_response(body: &str, socket: &mut TcpStream) -> anyhow::Result<()> {
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain;\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
         body
     );
-    debug!("Try to send respose \n{}", response);
+    debug!("Try to send response \n{}", response);
     Ok(socket.write_all(response.as_bytes()).await?)
 }
